@@ -28,17 +28,16 @@ export function getPublicImageUrl(storageKey: string): string {
 }
 
 /**
- * General media URL with /api/media fallback. Use for admin/preview only.
- * Storefront components should use getPublicImageUrl instead.
+ * Media URL: direct R2/CDN only. No /api/media fallback (zero-cost).
+ * Use getPublicImageUrl for public storefront; getMediaUrl for admin when R2 base is set.
+ * Returns "" when no public base URL (fail safely; /api/media is admin-only, not for storefront).
  */
 export function getMediaUrl(storageKey: string): string {
   if (!storageKey) return "";
   if (storageKey.startsWith("/api/media/") || storageKey.startsWith("http")) return storageKey;
   if (storageKey.includes("..")) return storageKey;
   const base = getPublicBaseUrl();
-  if (base) {
-    const b = base.endsWith("/") ? base.slice(0, -1) : base;
-    return `${b}/${storageKey}`;
-  }
-  return `/api/media/${storageKey}`;
+  if (!base) return "";
+  const b = base.endsWith("/") ? base.slice(0, -1) : base;
+  return `${b}/${storageKey}`;
 }
