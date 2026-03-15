@@ -1,8 +1,8 @@
 /**
  * Image URL helpers for zero-cost architecture.
  *
- * Public storefront MUST use getPublicImageUrl only (direct R2/CDN).
- * Admin/preview can use getMediaUrl when /api/media fallback is needed.
+ * Public storefront: getPublicImageUrl (direct R2/CDN only).
+ * Admin: getMediaUrl (same – direct R2/CDN only; no image proxy API).
  */
 
 const getPublicBaseUrl = (): string | null => {
@@ -15,7 +15,7 @@ const getPublicBaseUrl = (): string | null => {
 
 /**
  * Public storefront image URL only. Returns direct R2/CDN URL.
- * No /api/media fallback – public traffic must not depend on app server.
+ * No image proxy – public traffic must not depend on app server.
  * Returns "" when R2 public base URL is not configured (require it for storefront).
  */
 export function getPublicImageUrl(storageKey: string): string {
@@ -28,14 +28,13 @@ export function getPublicImageUrl(storageKey: string): string {
 }
 
 /**
- * Media URL: direct R2/CDN only. No /api/media fallback (zero-cost).
- * Use getPublicImageUrl for public storefront; getMediaUrl for admin when R2 base is set.
- * Returns "" when no public base URL (fail safely; /api/media is admin-only, not for storefront).
+ * Media URL: direct R2/CDN only (same as getPublicImageUrl; no image proxy).
+ * Use getPublicImageUrl for storefront; getMediaUrl for admin. Both require R2 public base URL.
+ * Returns "" when no public base URL. Pass-through for keys that are already full URLs.
  */
 export function getMediaUrl(storageKey: string): string {
-  if (!storageKey) return "";
-  if (storageKey.startsWith("/api/media/") || storageKey.startsWith("http")) return storageKey;
-  if (storageKey.includes("..")) return storageKey;
+  if (!storageKey || storageKey.includes("..")) return "";
+  if (storageKey.startsWith("http")) return storageKey;
   const base = getPublicBaseUrl();
   if (!base) return "";
   const b = base.endsWith("/") ? base.slice(0, -1) : base;

@@ -31,8 +31,7 @@
 │  Middleware        → Session from Supabase Auth; /admin protection        │
 │  Server Components → createClient() (Supabase server), storefront reads   │
 │  Server Actions    → Auth, products, draft-images, settings, cleanup    │
-│  API routes        → POST /api/upload-sign (presigned URL only)          │
-│  (optional)        → GET /api/media/[...key] (admin/fallback only)       │
+│  API routes        → POST /api/upload-sign only (presigned PUT URL)      │
 └─────────────────────────────────────────────────────────────────────────┘
                                     │
           ┌─────────────────────────┼─────────────────────────┐
@@ -86,8 +85,7 @@ src/
 │   │   ├── cleanup-temp.ts          # Server actions (no API route)
 │   │   └── specs.ts                 # getProductSpecsForDisplayAction
 │   ├── api/
-│   │   ├── upload-sign/route.ts     # POST: presigned PUT URL for R2
-│   │   └── media/[...key]/route.ts  # GET: optional admin/fallback image proxy
+│   │   └── upload-sign/route.ts     # POST: presigned PUT URL for R2 (only API route)
 │   ├── update-password/page.tsx     # Password reset (hash-based)
 │   ├── layout.tsx
 │   └── globals.css
@@ -117,7 +115,7 @@ src/
 │   │   ├── attribute-definitions.ts
 │   │   ├── attribute-definitions-shared.ts
 │   │   └── site-settings.ts
-│   ├── media-url.ts                 # getPublicImageUrl, getMediaUrl (R2 only; no /api/media fallback)
+│   ├── media-url.ts                 # getPublicImageUrl, getMediaUrl (direct R2 only; no image proxy)
 │   ├── preview-data.ts              # loadProductForPreview, loadProductsForPreview (draft merge)
 │   ├── types.ts                     # Saree, SareeImage
 │   ├── utils.ts
@@ -153,7 +151,7 @@ src/
 
 - **Pages:** `(store)/page.tsx`, `kanchipuram-silks/page.tsx`, `saree/[slug]/page.tsx`. All use `revalidate = 3600`; no `cookies()` in server data path so responses can be cached.
 - **Data:** Server fetches via `lib/data/sarees.ts` → `modules/storefront/storefront.service` → `storefront.repository` (Supabase). Only `status = 'approved'` and `is_discontinued = false`.
-- **Images:** URLs built with `getPublicImageUrl(storageKey)` (in `lib/media-url.ts` and storefront.service). Direct R2 base URL only; no `/api/media` fallback for storefront. Requires `NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL` (or server-side equivalent).
+- **Images:** URLs built with `getPublicImageUrl(storageKey)` (in `lib/media-url.ts` and storefront.service). Direct R2 base URL only; no image proxy API. Requires `NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL` (or server-side equivalent).
 - **Revalidation:** After product create/update/approve/discontinue/draft-approve, `revalidatePath("/")`, `revalidatePath("/kanchipuram-silks")`, and `revalidatePath(\`/saree/${slug}\`)` in `app/actions/products.ts`.
 
 ### 4.2 Admin product CRUD & images
@@ -172,12 +170,11 @@ src/
 
 ## 5. API Routes (Current)
 
-| Route | Method | Purpose | Required for zero-cost? |
-|-------|--------|---------|--------------------------|
-| `/api/upload-sign` | POST | Return presigned PUT URL for R2 | Yes (only way to upload without sending file through app). |
-| `/api/media/[...key]` | GET | Stream or redirect to R2 (admin/fallback) | No. Storefront must not depend on it. Optional for admin when R2 public URL not set. |
+| Route | Method | Purpose |
+|-------|--------|---------|
+| `/api/upload-sign` | POST | Return presigned PUT URL for R2. Only API route; required for admin uploads (browser → R2 without sending file through app). |
 
-There is no `/api/cleanup-temp`; cleanup is done via Server Actions.
+There is no `/api/media` (removed); storefront and admin both use direct R2 URLs via `getPublicImageUrl` / `getMediaUrl`. There is no `/api/cleanup-temp`; cleanup is done via Server Actions only.
 
 ---
 
@@ -199,10 +196,11 @@ There is no `/api/cleanup-temp`; cleanup is done via Server Actions.
 
 ## 8. Conventions for Reviewers
 
-- **Storefront:** Must not call `/api/media` or rely on upload proxy. Use `getPublicImageUrl` and direct R2 URLs only.
-- **Uploads:** Browser → presigned URL → R2. Only API route involved is `/api/upload-sign`.
-- **Cleanup:** Server Actions in `app/actions/cleanup-temp.ts`; no cleanup API route.
+- **Storefront:** Use `getPublicImageUrl` and direct R2 URLs only; no image proxy API.
+- **Admin images:** Use `getMediaUrl` (same behaviour as getPublicImageUrl: direct R2 only). R2 public base URL must be set for admin to see images.
+- **Uploads:** Browser → presigned URL from `/api/upload-sign` → PUT to R2. Only API route is `/api/upload-sign`.
+- **Cleanup:** Server Actions in `app/actions/cleanup-temp.ts` only; no cleanup API route.
 - **Auth:** Supabase Auth + middleware + admin layout. `profiles.role` used in preview and RLS; middleware/admin layout currently treat any logged-in user as admin in code (no profile check there).
 - **Revalidation:** After product mutations, `revalidatePath` for `/`, `/kanchipuram-silks`, and `/saree/[slug]` as appropriate.
 
-This document reflects the codebase as of the last analysis. Use it to review or recommend changes (e.g. tightening admin check to `profiles.role`, or removing `/api/media` if not needed).
+This document reflects the codebase as of the last review. Use it to review or recommend changes (e.g. tightening admin check to `profiles.role`).
