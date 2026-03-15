@@ -7,6 +7,7 @@ import { BrandStory } from "@/components/sections/BrandStory";
 import { CuratedPreviewGrid } from "@/components/sections/CuratedPreviewGrid";
 import type { Saree } from "@/lib/types";
 
+/** Preview bar + draft data: loaded only when chunk loads (admin path). Default bundle has no preview/preview-mode imports. */
 const PREVIEW_BAR_SLOT_ID = "home-preview-bar-slot";
 
 const HomePreviewBridge = dynamic(

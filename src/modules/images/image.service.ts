@@ -40,19 +40,16 @@ export async function deleteProductImage(storageKey: string): Promise<void | { e
 }
 
 /**
- * Return the best URL for displaying an image: direct R2/public CDN URL when
- * configured, otherwise the app proxy URL (/api/media/...). Set
- * NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL (or CLOUDFLARE_R2_PUBLIC_BASE_URL)
- * to serve images directly from Cloudflare R2/CDN and avoid proxying through Next.js.
+ * Server-side image URL: direct R2/CDN only. No /api/media fallback (zero-cost storefront).
+ * For public storefront use getPublicImageUrl() from @/lib/media-url instead.
+ * Returns "" when R2 public base URL is not configured (fail safely, no app proxy).
  */
 export function getProductImageUrl(storageKey: string): string {
   if (!storageKey) return "";
-  if (storageKey.startsWith("/api/media/")) return storageKey;
-  if (storageKey.startsWith("http://") || storageKey.startsWith("https://")) return storageKey;
+  if (storageKey.startsWith("http")) return storageKey;
   if (storageKey.includes("..")) return storageKey;
   const directUrl = getPublicUrl(storageKey);
-  if (directUrl) return directUrl;
-  return `/api/media/${storageKey}`;
+  return directUrl ?? "";
 }
 
 // --- Low-level passthrough for media route and temp uploads ---
