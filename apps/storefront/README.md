@@ -1,51 +1,49 @@
-# Storefront (static export for Cloudflare Pages)
+# Storefront (`apps/storefront`)
 
-Standalone static storefront app. Reuses `src/storefront` from the repo root. Build outputs to `out/` for deployment to Cloudflare Pages.
+Static Next.js app for the public customer-facing site: home, collection, product detail, information.
 
-## Prerequisites
+## Scripts
 
-- Node 18+
-- Supabase project (for product data at build time)
-- Env vars (see below)
+| Command | Description |
+|--------|-------------|
+| `npm run dev` | Dev server on **port 3001** |
+| `npm run build` | Static export → `out/` |
+| `npm run start` | Serve production build (port 3001) |
+| `npm run lint` | ESLint |
 
-## Local development
+## Environment variables
 
-```bash
-# From repo root, copy env so the app can reach Supabase
-cp .env.local apps/storefront/.env.local   # or set in shell
+Create `.env.local` in **this folder** (`apps/storefront/.env.local`).
 
-cd apps/storefront
-npm install
-npm run dev
-```
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase project URL (read-only data at build time) |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase anon key |
+| `NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL` or `CLOUDFLARE_R2_PUBLIC_BASE_URL` | Yes* | Public base URL for product images (R2) |
 
-Open http://localhost:3001
+\*Build fails to show images if missing; URLs are resolved in `src/storefront/services/storefront.service.ts`.
 
-## Build (static export)
+Optional: `NEXT_PUBLIC_SITE_URL` for absolute links in client-only code (e.g. WhatsApp share).
 
-```bash
-cd apps/storefront
-# Ensure .env.local exists with:
-#   NEXT_PUBLIC_SUPABASE_URL
-#   NEXT_PUBLIC_SUPABASE_ANON_KEY
-#   NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL  (or CLOUDFLARE_R2_PUBLIC_BASE_URL)
-npm run build
-```
+## Architecture
 
-Output is in `out/`. Serve locally with e.g. `npx serve out`.
+- **App routes:** `app/` (pages, layout, globals).
+- **Shared module:** `../../src/storefront` (imported as `storefront` via `tsconfig` paths).
+- **Output:** `output: "export"` in `next.config.mjs` → static HTML in `out/`.
 
-## Deploy to Cloudflare Pages
+## Documentation (in this app)
 
-1. **Workers & Pages** → **Create** → **Pages** → **Connect to Git** (this repo).
-2. **Build settings:**
-   - **Root directory:** `apps/storefront`
-   - **Framework preset:** None
-   - **Build command:** `npm ci && npm run build`
-   - **Build output directory:** `out`
-3. **Environment variables** (Build time):
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-   - `NEXT_PUBLIC_CLOUDFLARE_R2_PUBLIC_BASE_URL` (or `CLOUDFLARE_R2_PUBLIC_BASE_URL`)
-4. Save and deploy.
+All storefront-specific docs live under **`docs/`** in this folder:
 
-Admin and API stay on your main app (e.g. Vercel); this deploy is storefront-only.
+| File | Contents |
+|------|----------|
+| [docs/DEPLOY_STOREFRONT_CLOUDFLARE.md](./docs/DEPLOY_STOREFRONT_CLOUDFLARE.md) | Deploy static export to Cloudflare Pages |
+| [docs/STOREFRONT_LAYER.md](./docs/STOREFRONT_LAYER.md) | `src/storefront` module structure and behaviour |
+| [docs/STOREFRONT_UX_RECOMMENDATIONS.md](./docs/STOREFRONT_UX_RECOMMENDATIONS.md) | UX wireframes and recommendations |
+
+Repo-level `docs/` may contain older copies; the **canonical** storefront docs are here.
+
+## Related apps
+
+- **Admin:** `apps/admin` — product management (not part of this build).
+- **Upload signer:** `apps/upload-signer` — R2 presign worker (admin only; not used by storefront).

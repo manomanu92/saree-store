@@ -1,0 +1,15 @@
+name = "upload-signer"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# R2 and Supabase secrets: set via wrangler secret or in dashboard
+# wrangler secret put CLOUDFLARE_R2_ACCOUNT_ID
+# wrangler secret put CLOUDFLARE_R2_ACCESS_KEY_ID
+# wrangler secret put CLOUDFLARE_R2_SECRET_ACCESS_KEY
+# wrangler secret put CLOUDFLARE_R2_BUCKET
+# wrangler secret put SUPABASE_JWT_SECRET
+#
+# Optional CORS allowlist: variable name CORS_ORIGINS (comma-separated origins).
+# Do NOT put real domains in this file — set them in Cloudflare Dashboard (Worker →
+# Settings → Variables), or at deploy time: wrangler deploy --var CORS_ORIGINS:"$CORS_ORIGINS"
+# (e.g. from GitLab CI/CD variables). For local dev only, use .dev.vars (gitignored).

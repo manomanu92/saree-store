@@ -28,6 +28,9 @@ yarn-error.log*
 # local env files
 .env*.local
 
+# Wrangler local-only vars (upload-signer — never commit domains/secrets)
+apps/upload-signer/.dev.vars
+
 # vercel
 .vercel
 
