@@ -3,7 +3,13 @@
  * POST /sign-upload | /finalize-temp | /delete-objects (all require admin JWT).
  */
 
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import {
+  createRemoteJWKSet,
+  decodeJwt,
+  decodeProtectedHeader,
+  jwtVerify,
+  type JWTPayload,
+} from "jose";
 import type { Env } from "./env";
 import { r2Request } from "./r2-s3";
 
@@ -46,40 +52,87 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
   };
 }
 
+type TokenDiag = {
+  /** From JWT header (unsigned) — e.g. ES256, HS256 */
+  alg?: string;
+  /** From JWT payload (unsigned) — helps match issuer */
+  iss?: string;
+  /** If JWKS URL was fetched, HTTP status */
+  jwks_status?: number;
+};
+
 type AdminAuthResult =
   | { ok: true; sub: string }
-  | { ok: false; reason: "invalid_token" | "not_admin" | "missing_auth_env" };
+  | { ok: false; reason: "invalid_token" | "not_admin" | "missing_auth_env"; diag?: TokenDiag };
 
-/** Supabase asymmetric JWTs (JWT signing keys / ES256) — verify via JWKS. */
-async function verifySupabaseJwtWithJwks(token: string, supabaseUrl: string): Promise<JWTPayload | null> {
+/** Supabase asymmetric JWTs (ES256 / ECC P-256) — verify via JWKS. */
+async function verifySupabaseJwtWithJwks(
+  token: string,
+  supabaseUrl: string,
+  diag: TokenDiag
+): Promise<JWTPayload | null> {
   const base = supabaseUrl.replace(/\/$/, "");
-  const jwksUrl = new URL(`${base}/auth/v1/.well-known/jwks.json`);
+  const jwksPath = `${base}/auth/v1/.well-known/jwks.json`;
+  const jwksUrl = new URL(jwksPath);
+
+  const jwksRes = await fetch(jwksUrl.toString(), { method: "GET" });
+  diag.jwks_status = jwksRes.status;
+  if (!jwksRes.ok) {
+    console.error("upload-signer: JWKS fetch failed", jwksPath, jwksRes.status);
+    return null;
+  }
+
   const JWKS = createRemoteJWKSet(jwksUrl);
-  const issuer = `${base}/auth/v1`;
+
+  let unverifiedPayload: JWTPayload;
+  try {
+    unverifiedPayload = decodeJwt(token);
+  } catch {
+    return null;
+  }
+  if (typeof unverifiedPayload.iss === "string") {
+    diag.iss = unverifiedPayload.iss;
+  }
+
+  /** Issuer order: token’s iss first (Supabase may vary slightly), then defaults. */
+  const issuerCandidates = new Set<string>();
+  if (typeof unverifiedPayload.iss === "string") issuerCandidates.add(unverifiedPayload.iss);
+  issuerCandidates.add(`${base}/auth/v1`);
+  issuerCandidates.add(`${base}/auth/v1/`);
+
+  const verifyOpts = [
+    { audience: "authenticated" as const },
+    {},
+  ];
+
+  for (const iss of issuerCandidates) {
+    for (const extra of verifyOpts) {
+      try {
+        const { payload } = await jwtVerify(token, JWKS, {
+          issuer: iss,
+          clockTolerance: 120,
+          ...extra,
+        });
+        return payload;
+      } catch {
+        /* try next */
+      }
+    }
+  }
+
   try {
     const { payload } = await jwtVerify(token, JWKS, {
-      issuer,
       audience: "authenticated",
+      clockTolerance: 120,
     });
     return payload;
   } catch {
     try {
-      const { payload } = await jwtVerify(token, JWKS, { issuer });
+      const { payload } = await jwtVerify(token, JWKS, { clockTolerance: 120 });
       return payload;
-    } catch {
-      try {
-        const { payload } = await jwtVerify(token, JWKS, {
-          audience: "authenticated",
-        });
-        return payload;
-      } catch {
-        try {
-          const { payload } = await jwtVerify(token, JWKS);
-          return payload;
-        } catch {
-          return null;
-        }
-      }
+    } catch (e) {
+      console.error("upload-signer: JWKS verify failed", e);
+      return null;
     }
   }
 }
@@ -90,9 +143,25 @@ async function verifySupabaseJwtWithJwks(token: string, supabaseUrl: string): Pr
  * - ES256 (ECC P-256) via JWKS when SUPABASE_URL is set — no shared secret; UI only shows key IDs.
  * Admin role may be in app_metadata or user_metadata.
  */
+function readTokenDiagnostics(token: string, diag: TokenDiag): void {
+  try {
+    diag.alg = decodeProtectedHeader(token).alg;
+  } catch {
+    /* ignore */
+  }
+  try {
+    const p = decodeJwt(token);
+    if (typeof p.iss === "string") diag.iss = p.iss;
+  } catch {
+    /* ignore */
+  }
+}
+
 async function verifyAdminToken(token: string, env: Env): Promise<AdminAuthResult> {
   const jwtSecret = env.SUPABASE_JWT_SECRET?.trim();
   const supabaseUrl = env.SUPABASE_URL?.trim();
+  const diag: TokenDiag = {};
+  readTokenDiagnostics(token, diag);
 
   if (!jwtSecret && !supabaseUrl) {
     return { ok: false, reason: "missing_auth_env" };
@@ -106,11 +175,15 @@ async function verifyAdminToken(token: string, env: Env): Promise<AdminAuthResul
       const verified = await jwtVerify(token, secret, {
         algorithms: ["HS256"],
         audience: "authenticated",
+        clockTolerance: 120,
       });
       payload = verified.payload;
     } catch {
       try {
-        const verified = await jwtVerify(token, secret, { algorithms: ["HS256"] });
+        const verified = await jwtVerify(token, secret, {
+          algorithms: ["HS256"],
+          clockTolerance: 120,
+        });
         payload = verified.payload;
       } catch {
         payload = null;
@@ -118,12 +191,13 @@ async function verifyAdminToken(token: string, env: Env): Promise<AdminAuthResul
     }
   }
 
+  /** ES256 / RS256 tokens must use JWKS — HS256 path will not verify them. */
   if (!payload && supabaseUrl) {
-    payload = await verifySupabaseJwtWithJwks(token, supabaseUrl);
+    payload = await verifySupabaseJwtWithJwks(token, supabaseUrl, diag);
   }
 
   if (!payload) {
-    return { ok: false, reason: "invalid_token" };
+    return { ok: false, reason: "invalid_token", diag };
   }
 
   const appMeta = payload.app_metadata as Record<string, unknown> | undefined;
@@ -331,12 +405,38 @@ export default {
         );
       }
       if (admin.reason === "invalid_token") {
+        const d = admin.diag;
+        const jwksOk = d?.jwks_status === 200;
+        const lines = [
+          "JWT did not verify.",
+          "• Set Worker secret SUPABASE_URL exactly to your project API URL (e.g. https://xxxx.supabase.co) — same value as NEXT_PUBLIC_SUPABASE_URL in admin. Redeploy the worker after saving.",
+          "• For Legacy HS256 only: set SUPABASE_JWT_SECRET (JWT Secret from Supabase → Settings → API).",
+        ];
+        if (d?.alg === "HS256" && !env.SUPABASE_JWT_SECRET?.trim()) {
+          lines.push("• Your token uses alg HS256: add SUPABASE_JWT_SECRET, or use a session after switching to ECC/ES256 in Supabase.");
+        }
+        if (d?.alg && d.alg !== "HS256" && !jwksOk) {
+          lines.push(
+            `• JWKS fetch at your project returned HTTP ${d.jwks_status ?? "?"}. Check SUPABASE_URL (must be https://<project-ref>.supabase.co).`
+          );
+        }
+        if (d?.alg && d.alg !== "HS256" && jwksOk) {
+          lines.push(
+            `• Token alg=${d.alg}, iss=${d.iss ?? "?"}. If this persists, confirm the Worker’s SUPABASE_URL matches this project (same ref as in iss).`
+          );
+        }
         return jsonResponse(
           {
             error: "Unauthorized",
             code: "invalid_token",
-            hint:
-              "JWT did not verify. ECC (P-256) / ES256: set SUPABASE_URL on the Worker (same URL as NEXT_PUBLIC_SUPABASE_URL); there is no shared secret in the dashboard. Legacy HS256: set SUPABASE_JWT_SECRET. Redeploy after changing secrets.",
+            hint: lines.join(" "),
+            debug: {
+              token_alg: d?.alg,
+              token_iss: d?.iss,
+              jwks_http_status: d?.jwks_status,
+              worker_has_supabase_url: Boolean(env.SUPABASE_URL?.trim()),
+              worker_has_jwt_secret: Boolean(env.SUPABASE_JWT_SECRET?.trim()),
+            },
           },
           401,
           cors
