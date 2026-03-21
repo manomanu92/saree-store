@@ -4,13 +4,18 @@ The admin app uses **`output: "export"`** (static `out/`). CI builds Next.js, th
 
 ---
 
-## 1. One-time: create a Pages project
+## 1. Pages project name (no special “Direct Upload” step)
 
-1. Cloudflare Dashboard → **Workers & Pages** → **Create** → **Pages** tab.
-2. Choose **Direct Upload** (we deploy from GitHub Actions, not Cloudflare’s Git integration).
-3. Set **project name** to match what you use in GitHub (default in workflow: **`saree-admin`**), or pick any name and set **`CLOUDFLARE_PAGES_PROJECT_NAME`** in GitHub (see below).
+Cloudflare’s dashboard changes often; you **do not** need a legacy **“Direct Upload”** menu item.
 
-You only need the empty project; the workflow uploads builds.
+**Pick a project name** (default in our workflow: **`saree-admin`**) and set GitHub variable **`CLOUDFLARE_PAGES_PROJECT_NAME`** if you use a different name.
+
+Then either:
+
+- **Let the first deploy create it:** With a token that has **Cloudflare Pages → Edit**, the first successful **`cloudflare/pages-action`** run often **creates** the Pages project automatically if it does not exist yet, **or**
+- **Create an empty project first:** **Workers & Pages** → **Create** / **Create application** → choose **Pages** and finish the wizard until you have a project whose **name** matches `CLOUDFLARE_PAGES_PROJECT_NAME` (you can connect Git later or leave it disconnected — GitHub Actions uploads the `out/` folder).
+
+If the workflow errors with “project not found”, create the project manually once with that exact name, then re-run the workflow.
 
 ---
 
@@ -100,10 +105,30 @@ Update **`NEXT_PUBLIC_SITE_URL`** (if used) and **CORS** on upload-signer to inc
 | Upload fails in deployed admin | `NEXT_PUBLIC_UPLOAD_SIGNER_URL` correct; Worker **CORS** includes admin origin |
 | Wrong project | `CLOUDFLARE_PAGES_PROJECT_NAME` matches Cloudflare project name |
 
+### Upload-signer returns **403 Forbidden** on `POST /sign-upload`
+
+The worker only returns **403** when the JWT **verifies** but **`role` is not `admin`** in the token (`app_metadata` or `user_metadata`).
+
+1. In **Supabase** → **Authentication** → **Users** → your user → set **App metadata** / raw JSON so `role` is **`admin`**, **or** run SQL on `auth.users` / `raw_app_meta_data` (see [ENVIRONMENT.md](./ENVIRONMENT.md)).
+2. **Sign out** of the admin app and **sign in again** so the browser gets a **new access token** (old sessions won’t include the new metadata).
+
+### Upload-signer returns **401** on `POST /sign-upload`
+
+The JWT **did not verify** with the Worker’s **`SUPABASE_JWT_SECRET`**.
+
+1. In **Supabase** → **Settings** → **API** → copy **JWT Secret** (long string).
+2. In **Cloudflare** → **Workers** → **upload-signer** → **Settings** → **Variables** → confirm secret **`SUPABASE_JWT_SECRET`** matches **exactly** (same Supabase project as the admin’s `NEXT_PUBLIC_SUPABASE_URL`).
+3. If you deploy secrets from GitHub, update the **`SUPABASE_JWT_SECRET`** repository secret and re-run the upload-signer workflow.
+
+### Browser shows **CORS** error (no response body)
+
+If **`CORS_ORIGINS`** on the worker is set, it must include your **exact** admin origin (e.g. `https://saree-admin.pages.dev` — **no** path). If unset, the worker allows any origin (dev only).
+
 ---
 
 ## Related
 
 - [ENVIRONMENT.md](./ENVIRONMENT.md) — local `.env.local` and Supabase admin role  
 - [../../upload-signer/docs/DEPLOY_FROM_GITHUB.md](../../upload-signer/docs/DEPLOY_FROM_GITHUB.md) — upload-signer from GitHub  
+- [../../upload-signer/docs/TESTING.md](../../upload-signer/docs/TESTING.md) — curl tests  
 

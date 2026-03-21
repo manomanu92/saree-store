@@ -3,7 +3,7 @@
  * POST /sign-upload | /finalize-temp | /delete-objects (all require admin JWT).
  */
 
-import { jwtVerify } from "jose";
+import { jwtVerify, type JWTPayload } from "jose";
 import type { Env } from "./env";
 import { r2Request } from "./r2-s3";
 
@@ -46,19 +46,48 @@ function corsHeaders(request: Request, env: Env): Record<string, string> {
   };
 }
 
-async function verifyAdminToken(token: string, env: Env): Promise<{ sub: string } | null> {
+type AdminAuthResult =
+  | { ok: true; sub: string }
+  | { ok: false; reason: "invalid_token" | "not_admin" };
+
+/**
+ * Verify Supabase access_token (HS256). Admin role may be in app_metadata or user_metadata.
+ * Invalid signature / wrong secret → invalid_token. Valid JWT but no admin → not_admin.
+ */
+async function verifyAdminToken(token: string, env: Env): Promise<AdminAuthResult> {
+  const secret = new TextEncoder().encode(env.SUPABASE_JWT_SECRET);
+  let payload: JWTPayload;
+
   try {
-    const secret = new TextEncoder().encode(env.SUPABASE_JWT_SECRET);
-    const { payload } = await jwtVerify(token, secret, {
+    const verified = await jwtVerify(token, secret, {
       algorithms: ["HS256"],
       audience: "authenticated",
     });
-    const role = (payload.app_metadata as Record<string, string> | undefined)?.role;
-    if (role !== "admin") return null;
-    return { sub: payload.sub as string };
+    payload = verified.payload;
   } catch {
-    return null;
+    // Some Supabase tokens omit or vary `aud`; retry without audience check (still HS256 + same secret).
+    try {
+      const verified = await jwtVerify(token, secret, { algorithms: ["HS256"] });
+      payload = verified.payload;
+    } catch {
+      return { ok: false, reason: "invalid_token" };
+    }
   }
+
+  const appMeta = payload.app_metadata as Record<string, unknown> | undefined;
+  const userMeta = payload.user_metadata as Record<string, unknown> | undefined;
+  const role =
+    (typeof appMeta?.role === "string" && appMeta.role) ||
+    (typeof userMeta?.role === "string" && userMeta.role) ||
+    undefined;
+
+  if (role !== "admin") {
+    return { ok: false, reason: "not_admin" };
+  }
+  if (!payload.sub) {
+    return { ok: false, reason: "invalid_token" };
+  }
+  return { ok: true, sub: String(payload.sub) };
 }
 
 function sanitizeExtension(fileName: string): string {
@@ -236,8 +265,29 @@ export default {
     }
 
     const admin = await verifyAdminToken(token, env);
-    if (!admin) {
-      return jsonResponse({ error: "Forbidden" }, 403, cors);
+    if (!admin.ok) {
+      if (admin.reason === "invalid_token") {
+        return jsonResponse(
+          {
+            error: "Unauthorized",
+            code: "invalid_token",
+            hint:
+              "JWT did not verify. Set Worker secret SUPABASE_JWT_SECRET to the exact JWT Secret from Supabase → Settings → API (not the anon key). Redeploy the worker after changing secrets.",
+          },
+          401,
+          cors
+        );
+      }
+      return jsonResponse(
+        {
+          error: "Forbidden",
+          code: "not_admin",
+          hint:
+            "JWT is valid but app_metadata.role is not admin. In Supabase set raw_app_meta_data role to admin for this user, then sign out and sign in again to refresh the token.",
+        },
+        403,
+        cors
+      );
     }
 
     try {

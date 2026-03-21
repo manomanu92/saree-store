@@ -51,8 +51,13 @@ export async function signUploadRequest(
     }),
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: "Sign failed" }));
-    throw new Error(err.error || "Upload sign failed");
+    const err = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      hint?: string;
+    };
+    const msg = [err.error, err.hint].filter(Boolean).join(" — ") || "Upload sign failed";
+    throw new Error(msg);
   }
   const data = (await res.json()) as { putUrl: string; storageKey: string };
   return { putUrl: data.putUrl, storageKey: data.storageKey };
